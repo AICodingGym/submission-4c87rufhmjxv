@@ -220,8 +220,23 @@ class Collector:
                     sub_objs = self.related_objects(related, batch)
                     if self.can_fast_delete(sub_objs, from_field=field):
                         self.fast_deletes.append(sub_objs)
-                    elif sub_objs:
-                        field.remote_field.on_delete(self, field, sub_objs, self.using)
+                    else:
+                        related_model = related.related_model
+                        # Only fields referenced by other relations are needed
+                        # for collecting subsequent cascades. Keep all fields
+                        # when signal receivers may need the full instances or
+                        # select_related() requires them for its joins.
+                        if not (sub_objs.query.select_related or
+                                signals.pre_delete.has_listeners(related_model) or
+                                signals.post_delete.has_listeners(related_model)):
+                            referenced_fields = {
+                                rel_field.attname
+                                for rel in get_candidate_relations_to_delete(related_model._meta)
+                                for rel_field in rel.field.foreign_related_fields
+                            }
+                            sub_objs = sub_objs.only(*referenced_fields)
+                        if sub_objs:
+                            field.remote_field.on_delete(self, field, sub_objs, self.using)
             for field in model._meta.private_fields:
                 if hasattr(field, 'bulk_related_objects'):
                     # It's something like generic foreign key.
